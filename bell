@@ -1,0 +1,124 @@
+	rm(list=ls(all=T))
+	library(geeM); library(LambertW); library(bellreg)
+	library(foreign)
+	####geeM user defined function for bell model##
+	linkfun <- function(p) { log(p) }
+	unit_variance <- function(p) {
+		var_unit=p*(1+W(p))
+		return(var_unit) }
+	linkinv <- function(eta) {exp(eta)}
+	mu.eta <- function(eta) {(exp(eta)) }
+	FunList <- list(linkfun, unit_variance, linkinv, mu.eta)
+	########## negative bin. dist. functions for geeM##############
+	linkfun <- function(p) {log(p) }
+	unit_variance <- function(p,theta) {
+		theta=3
+		var_unit=p+(p^2)/(theta)
+		#p*(1+W(p))
+		return(var_unit)
+	}
+	linkinv <- function(eta) {exp(eta) }
+	mu.eta <- function(eta) { (exp(eta)) }
+	negbin <- list(linkfun, unit_variance, linkinv, mu.eta)
+	#####
+	#####gee-based bell model data generation function for bell dist.####
+	generatedata <- function(beta,rho,X,K,len,corr_type,time){
+		dimension=length(time);	lambda0=rho
+		## AR1 Correlation ##
+		if (corr_type=="AR1"){
+			temp <- matrix(NA,dimension,dimension)
+			diag(temp) <- 1
+			for (i in 2:dimension) {
+				for (j in 1:(i-1)) {
+					temp[i,j] <- lambda0^(i-j)
+					temp[j,i] <- temp[i,j]
+				}
+			}
+		}
+		## EXC ##
+		if (corr_type=="EXC"){
+			temp <- matrix(NA,dimension,dimension)
+			diag(temp) <- 1
+			for (i in 2:dimension) {
+				for (j in 1:(i-1)) {
+					temp[i,j] <- lambda0
+					temp[j,i] <- temp[i,j]
+				}	
+			}
+		}
+		## Unstructured##
+		if (corr_type=="UNS"){
+			temp <- matrix(NA,dimension,dimension)
+			diag(temp) <- 1
+			for (i in 2:dimension) {
+				for (j in 1:(i-1)) {
+					temp[i,j] <- runif(1,-.9,.9)
+					temp[j,i] <- temp[i,j]
+				}
+			}
+		}
+		## Identity ##
+		if (corr_type=="IDE"){
+			lambda0=0
+			temp <- matrix(NA,dimension,dimension)
+			diag(temp) <- 1
+			for (i in 2:dimension) {
+				for (j in 1:(i-1)) {
+					temp[i,j] <- lambda0^(i-j)
+					temp[j,i] <- temp[i,j]
+				}
+			}
+		}
+		sg_var=3; temp=temp*sg_var
+		std_z = mvrnorm(K, mu=rep(0, each=dimension), Sigma=temp)
+		std_vec=cbind(c(t( pnorm(std_z ))))
+		std_list=list(); a=0; mean.vec=list(); theta=list(); y <-list();
+		modelX=list(); y_i=c(); eta_i=list() ##XT*beta 
+		X=unname(X)
+		for (i in 1:K)
+		{
+			modelX[[i]]=as.matrix(X[(a+1):(a+len[i]),])
+			std_list[[i]]=std_vec[(a+1):(a+len[i])]
+			mean.vec[[i]] <- exp(crossprod(t(modelX[[i]]),beta))
+			eta_i[[i]]=crossprod(t(modelX[[i]]),beta)
+			a=a+len[i]; theta[[i]]=W(mean.vec[[i]])
+		}
+		for (i in 1:K) {
+			y_i=c();
+			mu_eta=c();
+			std_norm=c();
+			mu_eta=mean.vec[[i]]
+			std_norm=std_list[[i]]
+			for (j in 1:length(mu_eta))
+			{
+				y_i[j]<- qbell(std_norm[j], W(mu_eta[j]))
+			}
+			y[[i]]=y_i
+		}
+		longform=unlist(y)
+		return(longform)
+	}
+	##############################
+	K=50 ## number of subject
+	time <- 1:10; clsz=length(time) ##subject size (all equal)
+	len <- rep(clsz,K); id <- rep(1:K, each = clsz)
+	N <- K*clsz
+	beta <- c(0, -0.62,0.68); rho <- 0.2
+	corr_type="AR1"
+	group <- c(rep(0,K/2), rep(1,K/2))
+	data_0 <- expand.grid(group=0,time=time, id=seq(1,K/2))
+	data_1 <- expand.grid(group=1,time=time, id=seq(((K/2)+1),K))
+	x2 <-runif(N, -2, 3)  
+	data <- rbind(data_0,data_1); data=cbind(data,x2)
+	X <- as.matrix(cbind(1,data[,1],x2))
+	y_sim=generatedata(beta,rho,X,K,len,corr_type,time)
+	data_sim <- cbind(y_sim, data)
+	data_sim=data.frame(data_sim)
+	bell_exc <-  geem(y_sim~data[,1]+ x2, id=id,data = data_sim,
+	family = FunList, maxit = 30, tol = 1e-5, sandwich = TRUE, 
+	corstr = "exchangeable")
+	summary(bell_exc)
+	negbin_exc <- geem(y_sim~data[,1]+ x2, id=id,data = data_sim,
+	family = negbin, maxit = 30, tol = 1e-5, sandwich = TRUE, 
+	corstr = "exchangeable")
+	summary(negbin_exc)	
